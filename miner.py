@@ -9,7 +9,7 @@ import progressbar
 
 REPO_LIMIT = 1000
 REPOS = defaultdict(dict)
-LOCAL_PATH = ""
+LOCAL_PATH = "."
 ERROR_REPOS = []
 
 def OctopusMiner():
@@ -40,16 +40,20 @@ def reportTotals():
     repos = len(REPOS) - len(ERROR_REPOS)
     branches = sum(len(REPOS[k]['branches']) for k in REPOS)
     commits = sum(REPOS[k]['commits'] for k in REPOS)
+    merges = sum(len(REPOS[k]['merges']) for k in REPOS)
     octopus = sum(len(REPOS[k]['octopus_merges']) for k in REPOS)
-    print("Repositories: {}, Branches: {}, Commits: {}, Octopus Merges: {}".format(repos, branches, commits, octopus))
+    print("Repositories: {}, Branches: {}, Commits: {}, Merges: {}, Octopus Merges: {}".format(repos, branches, commits, merges, octopus))
+    languages = {i:[REPOS[k]['language'] for k in REPOS].count(i) for i in set([REPOS[k]['language'] for k in REPOS])}
+    for lang, count in sorted(languages.items(), key=lambda x: x[1], reverse=True):
+        print("\t{}: {}".format(lang, count))
 
 def writeReport():
     path = buildPath('repos.csv')
     with open(path, 'w', newline='') as csvfile:
         writer = csv.writer(csvfile, delimiter=',', quoting=csv.QUOTE_ALL)
-        writer.writerow(['repo_name','url','branches','commits','octopus_merges'])
+        writer.writerow(['repo_name','url','language','branches','commits','merges','octopus_merges'])
         for k,v in REPOS.items():
-            writer.writerow([k, v['url'], stringify(v['branches']), v['commits'], stringify(v['octopus_merges'])])
+            writer.writerow([k, v['url'], v['language'], stringify(v['branches']), v['commits'], stringify(v['merges']), stringify(v['octopus_merges'])])
 
 def processGitHubPage(url):
     page = urlopen(url)
@@ -63,8 +67,10 @@ def processGitHubPage(url):
     for repo in json_data:
         REPOS[repo['full_name']] = {
             'url': repo['html_url'],
+            'language': processTopLang(repo['full_name']),
             'branches': [],
             'commits': 0,
+            'merges': [],
             'octopus_merges': []
         }
         if len(REPOS) >= REPO_LIMIT:
@@ -79,10 +85,20 @@ def resetGHRateLimit(remaining, request_limit, reset_time):
     print("***GitHub API Rate Limit Reached ({}/{} requests)*** Waiting {} (HH:MM:SS)...".format(remaining, request_limit, wait_formatted))
     time.sleep(wait)
 
+def processTopLang(repo_full_name):
+    lang_url = ("https://api.github.com/repos/" + repo_full_name + os.path.sep + "languages")
+    print("repo url: {}, lang url: {}".format(repo_full_name, lang_url))
+    page = urlopen(lang_url)
+    json_data = json.loads(page.read())
+    if len(json_data) > 0:
+        return list(json_data.keys())[0]
+    else:
+        return ""
+
 def walkCommitHistory(repo_name, branch_name):
     if repo_name in ERROR_REPOS:
         return
-    path = buildPath(repo_name)
+    path = buildPath('scratch' + os.path.sep + repo_name)
     try:
         repo = Repo(path)
     except:
@@ -91,15 +107,17 @@ def walkCommitHistory(repo_name, branch_name):
         return
     for commit in repo.iter_commits(branch_name):
         REPOS[repo_name]['commits'] += 1
+        if len(commit.parents) == 2:
+            REPOS[repo_name]['merges'].append(commit.hexsha)
         if len(commit.parents) > 2:
             REPOS[repo_name]['octopus_merges'].append(commit.hexsha)
-    print("\tWalking branch '{}' => {} commits, {} octopus".format(branch_name, REPOS[repo_name]['commits'], len(REPOS[repo_name]['octopus_merges'])))
+    print("\tWalking branch '{}' => {} commits, {} merges, {} octopus".format(branch_name, REPOS[repo_name]['commits'], len(REPOS[repo_name]['merges']), len(REPOS[repo_name]['octopus_merges'])))
 
 def buildPath(filename):
     return (LOCAL_PATH + filename) if LOCAL_PATH.endswith(os.path.sep) else (LOCAL_PATH + os.path.sep + filename)
 
 def cloneRepo(repo_name, url):
-    path = buildPath(repo_name)
+    path = buildPath('scratch' + os.path.sep + repo_name)
     if os.path.isdir(path) and os.path.exists(path):
         return
     else:
@@ -112,7 +130,7 @@ def cloneRepo(repo_name, url):
 def updateBranches(repo_name):
     if repo_name in ERROR_REPOS:
         return
-    path = buildPath(repo_name)
+    path = buildPath('scratch' + os.path.sep + repo_name)
     try:
         repo = Repo(path)
     except:
