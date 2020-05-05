@@ -2,10 +2,12 @@
 from urllib.request import urlopen
 import re, json, csv, pickle
 import time, datetime
-import os, shutil
+import os, shutil, sys
 from collections import defaultdict
+from subprocess import Popen, PIPE
 from git import Repo
 import progressbar
+#import fixer
 
 REPO_LIMIT = 1000
 REPOS = defaultdict(dict)
@@ -73,8 +75,8 @@ def processEntry(name, url):
 
 def examineBranchesAndCommits():   #Remove list and just replace with single netty/netty gh
     repo_names = list(REPOS.keys())
-    #for i in progressbar.progressbar(range(len(REPOS)), redirect_stdout=True):
-    for i in range(len(REPOS)):
+    for i in progressbar.progressbar(range(len(REPOS)), redirect_stdout=True):
+    #for i in range(len(REPOS)):
         repo = repo_names[i]
         print("{}: Examining {}".format(i+1, repo))
         cloneRepo(repo, REPOS[repo]['url'])
