@@ -1,0 +1,4 @@
+https://github.com/netty/netty.git netty
+https://github.com/nelsonni/ConflictsOfInterest.git ConflictsOfIntrest
+https://github.com/OSU-USLI-19/Rover-2019.git USLI
+https://github.com/nelsonni/OctopusMiner.git OctopusMiner
