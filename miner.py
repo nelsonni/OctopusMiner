@@ -13,44 +13,156 @@ REPO_LIMIT = 1000
 REPOS = defaultdict(dict)
 LOCAL_PATH = "."
 ERROR_REPOS = []
+CONFLICTED_MERGES = []
 
 def OctopusMiner():
     buildRepoFromTxt()
     examineBranchesAndCommits()
-    reportTotals()
-    writeReport()
-    print(REPOS)
+    examineAllMerges()
+    print(CONFLICTED_MERGES)
+    #reportTotals()
+    #writeReport()
 
-#def buildRepoList():   #remove for netty/netty instead of itterating list of 1000
-#    GH_url = "https://api.github.com/repositories?since=1"
-#    while (len(REPOS) < REPO_LIMIT):
-#        (first, last, next) = processGitHubPage(GH_url)
-#        print('Processed repos {} to {} from {}'.format(first, last, GH_url))
-#        GH_url = next
 
-#def processGitHubPage(url):               #build page
-#    page = urlopen(url)
-#    header = dict(page.info())
-#    api_limit = header['X-RateLimit-Limit']
-#    api_remaining = header['X-RateLimit-Remaining']
-#    api_reset = header['X-RateLimit-Reset']
-#    api_next = header['Link'].partition("<")[2].partition(">")[0]
-#    json_data = json.loads(page.read())
-#   first = len(REPOS)                                             #first is last?
-#    for repo in json_data:
-#        REPOS[repo['full_name']] = {
-#            'url': repo['html_url'],
-#            'language': processTopLang(repo['full_name']),
-#            'branches': [],
-#            'commits': 0,
-#            'merges': [],
-#            'octopus_merges': []
-#        }
-#        if len(REPOS) >= REPO_LIMIT:
-#            break
-#    if int(api_remaining) <= 0:
-#        resetGHRateLimit(api_remaining, api_limit, api_reset)
-#    return (first, len(REPOS), api_next)
+def examineAllMerges():
+
+    count = 0
+    for k in REPOS:
+        count += 1
+        path = buildPath('scratch' + os.path.sep + str(k))
+        myRepo = Repo(path)
+        for j in progressbar.progressbar(range(len(REPOS[k]['merges'])), redirect_stdout=True):
+            print("In repo {}:{} working on merge {}".format(count, k, REPOS[k]['merges'][j]))
+            commit = myRepo.commit(REPOS[k]['merges'][j])
+            try:
+                findConflicts(REPOS[k], commit, str(k))
+            except:
+                print("Something went wrong!")
+
+    return 0
+
+def findConflicts(repo, merge_commit, repo_name):
+    conflictSets = []
+    old_wd = os.getcwd()
+    os.chdir("./scratch/"+ repo_name)
+    
+    if len(merge_commit.parents) < 2:
+        return [] # not enough commits for a conflict to emerge
+    else:
+        try:
+            firstCommitStr = merge_commit.parents[0].hexsha
+
+            p = Popen(["git", "checkout", firstCommitStr], stdin=None, stdout=PIPE, stderr=PIPE)
+            out, err = p.communicate()
+            rc = p.returncode
+
+            arguments = ["git", "merge"] + list(map(lambda c:c.hexsha, merge_commit.parents))
+            p = Popen(arguments, stdin=None, stdout=PIPE, stderr=PIPE)
+            out, err = p.communicate()
+            rc = p.returncode
+
+            filenames = findFilenames(out)
+            for filename in filenames:
+                conflictSets += getConflictSets(repo_name, filename, merge_commit)
+
+            p = Popen(["git", "merge", "--abort"], stdin=None, stdout=PIPE, stderr=PIPE)
+            out, err = p.communicate()
+            rc = p.returncode
+            return conflictSets
+
+        finally:
+            try:
+                # Completely reset the working state after performing the merge
+                p = Popen(["git", "clean", "-xdf"], stdin=None, stdout=PIPE, stderr=PIPE)
+                out, err = p.communicate()
+                rc = p.returncode
+                p = Popen(["git", "reset", "--hard"], stdin=None, stdout=PIPE, stderr=PIPE)
+                out, err = p.communicate()
+                rc = p.returncode
+                p = Popen(["git", "checkout", "."], stdin=None, stdout=PIPE, stderr=PIPE)
+                out, err = p.communicate()
+                rc = p.returncode
+            finally:
+                # Set the working directory back
+                os.chdir(old_wd)
+              
+
+    return conflictSets
+
+def getConflictSets(repo_name, filename, merge_commit):
+    """
+    Requires that the filename exist in the currently branch checked out through git.
+    """
+    path = os.getcwd() + "\\" + str(filename).split("b'")[-1][:-1].replace("/","\\")
+    f = open(path, 'r')
+    lines = f.readlines()
+    f.close()
+    print("Looking at conflict in %s" % path)
+
+    isLeft, isRight = False, False
+    leftLines, rightLines = [], []
+    conflictSets = []
+    leftSHA = None
+    rightSHA = None
+
+    for line in lines:
+        if isRight:
+            if ">>>>>>>" not in line:
+                rightLines.append(line)
+                
+            else:
+                rightSHA = line.split(">>>>>>>")[1].strip()
+                isRight = False
+
+                leftDict = {}
+                leftDict['filename'] = path
+                leftDict['SHA'] = leftSHA
+                leftDict['lines'] = os.linesep.join(leftLines)
+
+                rightDict = {}
+                rightDict['filename'] = path
+                rightDict['SHA'] = rightSHA
+                rightDict['lines'] = os.linesep.join(rightLines)
+
+                conflict = [leftDict, rightDict]
+                conflictSets.append(conflict)
+
+        if isLeft:
+            if "=======" not in line:
+                leftLines.append(line)
+            else:
+                isRight = True
+                isLeft = False
+
+        if "<<<<<<<" in line:
+            isLeft = True
+            leftSHA = line.split("<<<<<<<")[1].strip()
+            if leftSHA == 'HEAD':
+                leftSHA = str(merge_commit)
+    
+    arguments = ["git", "merge"] + list(map(lambda c:c.hexsha, merge_commit.parents))
+    firstCommitStr = merge_commit.parents[0].hexsha
+    tag = repo_name + " " + str(merge_commit) + " arguments: " + str(arguments) + " firstCommitStr: " + str(firstCommitStr) 
+    if tag not in CONFLICTED_MERGES:
+        CONFLICTED_MERGES.append(tag)
+        print("Added {} to list from the {} repository".format(str(merge_commit), repo_name))
+
+    return conflictSets
+
+def findFilenames(output):
+    conflict_filenames = []
+    if "CONFLICT" in str(output):
+        notification_lines = [x for x in output.splitlines() if str.encode("CONFLICT") in x]
+        for line in notification_lines:
+            if str.encode("Merge conflict in ") in line:
+                conflict_filenames.append(line.split(str.encode('Merge conflict in '))[-1])
+            elif str.encode("deleted in ") in line:
+                conflict_filenames.append(line.split(str.encode(' deleted in '))[0].split(str.encode(': '))[-1])
+            else:
+                print("Unknown conflict filename detection: %s" % line)
+                continue
+    return conflict_filenames
+
 
 def buildRepoFromTxt():
     txt = open("RepoList.txt", "r")
@@ -76,7 +188,6 @@ def processEntry(name, url):
 def examineBranchesAndCommits():   #Remove list and just replace with single netty/netty gh
     repo_names = list(REPOS.keys())
     for i in progressbar.progressbar(range(len(REPOS)), redirect_stdout=True):
-    #for i in range(len(REPOS)):
         repo = repo_names[i]
         print("{}: Examining {}".format(i+1, repo))
         cloneRepo(repo, REPOS[repo]['url'])
@@ -103,24 +214,6 @@ def writeReport():
         writer.writerow(['repo_name','url','language','branches','commits','merges','octopus_merges'])
         for k,v in REPOS.items():
             writer.writerow([k, v['url'], v['language'], stringify(v['branches']), v['commits'], stringify(v['merges']), stringify(v['octopus_merges'])])
-
-
-
-def resetGHRateLimit(remaining, request_limit, reset_time):    
-    wait = int(float(reset_time) - time.time())
-    wait_formatted = str(datetime.timedelta(seconds=wait))
-    print("***GitHub API Rate Limit Reached ({}/{} requests)*** Waiting {} (HH:MM:SS)...".format(remaining, request_limit, wait_formatted))
-    time.sleep(wait)
-
-def processTopLang(repo_full_name):               #not sure maybe finds the most used language, not sure what json_data.keys are or os.path.sep
-    lang_url = ("https://api.github.com/repos/" + repo_full_name + os.path.sep + "languages")
-    print("repo url: {}, lang url: {}".format(repo_full_name, lang_url))
-    page = urlopen(lang_url)
-    json_data = json.loads(page.read())
-    if len(json_data) > 0:
-        return list(json_data.keys())[0]
-    else:
-        return ""
 
 def walkCommitHistory(repo_name, branch_name):     #Walks through branch commits and finds parents of 2 and more
     if repo_name in ERROR_REPOS:
@@ -174,6 +267,7 @@ def removeRepo(repo_name):               # removes repo from list
 
 def stringify(aList):                    # Turns list into string
     return "[" + ','.join(map(str, aList)) + "]"
+
 
 if __name__ == "__main__":
     OctopusMiner()
