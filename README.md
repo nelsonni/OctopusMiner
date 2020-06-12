@@ -9,9 +9,14 @@ Required packages for successfully using the miner include:
 * `Progressbar 2` package required for displaying a simplified progress indicator: [WoLpH/python-progressbar](https://github.com/WoLpH/python-progressbar)
   * Also available through `pip`: `pip install progressbar2`
 
-To run software run miner.py. No arguments are required. Update the RepoList.txt with new repositories in the format of:
-
+To run the miner, use the following command (without additional arguments):
+```bash
+python3 miner.py
+```
+The miner will pull the list of GitHub repositories from the `RepoList.txt` as long as they are formatted in the same fashion as:
+```json
 https://github.com/nelsonni/ConflictsOfInterest.git ConflictsOfIntrest
 https://github.com/photonstorm/phaser.git phaser
+```
 
-The software will mine through these repos finding every conflict instance.
+The miner will evaluate all commits from all branches found on GitHub, and reduces the set of merge commits down to only those that are instances of a merge conflict.
