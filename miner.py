@@ -163,7 +163,7 @@ def findFilenames(output):
                 continue
     return conflict_filenames
 
-
+#reading text file to build repo
 def buildRepoFromTxt():
     txt = open("RepoList.txt", "r")
     for line in txt:
@@ -175,6 +175,7 @@ def buildRepoFromTxt():
 
     txt.close()
 
+#Build entry object
 def processEntry(name, url):
     REPOS[ name ] = {
         'url': url,
@@ -220,7 +221,7 @@ def walkCommitHistory(repo_name, branch_name):     #Walks through branch commits
         return
     path = buildPath('scratch' + os.path.sep + repo_name)
     try:
-        repo = Repo(path)                      # what is Repo func
+        repo = Repo(path)                      # Build repo objects
     except:
         print("\tRepo setup error for '{}' at {}".format(repo_name, path))
         ERROR_REPOS.append(repo_name)
